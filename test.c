@@ -3,20 +3,20 @@
 #include <stdio.h>
 #include <string.h>
 
-void test(char *regex, char *input, char *match) {
-  char *res = cpsre_matches(regex, input);
+void test(char *regex, char *input, char *exp) {
+  char *act = cpsre_matches(regex, input);
 
-  if ((res == CPSRE_SYNTAX) != (match == CPSRE_SYNTAX))
+  if ((act == CPSRE_SYNTAX) != (exp == CPSRE_SYNTAX))
     printf("test failed: /%s/ parse\n", regex);
-  if (res == CPSRE_SYNTAX || match == CPSRE_SYNTAX)
+  if (act == CPSRE_SYNTAX || exp == CPSRE_SYNTAX)
     return;
 
-  if ((res == NULL) != (match == NULL))
+  if ((act == NULL) != (exp == NULL))
     goto test_failed;
-  if (res == NULL || match == NULL)
+  if (act == NULL || exp == NULL)
     return;
 
-  if (strncmp(input, match, res - input) != 0 || match[res - input] != '\0')
+  if (strncmp(input, exp, act - input) != 0 || exp[act - input] != '\0')
   test_failed:
     printf("test failed: /%s/ against '%s'\n", regex, input);
 }
@@ -37,7 +37,6 @@ int main(void) {
   test("\t-\r*", "\t\n\v\f\rX", "\t\n\v\f\r");
   test(".", "abc", "a");
 
-  // XXX fix empty repetition
   // taken from LTRE
   test("()", "", "");
   test("", "\n", "");
@@ -46,7 +45,7 @@ int main(void) {
   test("(|n)(\n)", "\n", "\n");
   test("\r?\n", "\n", "\n");
   test("\r?\n", "\r\n", "\r\n");
-  // test("(a*)*", "a", "a");
+  test("(a*)*", "a", "a");
   test("(a+)+", "aa", "aa");
   test("(a?)?", "", "");
   test("a+", "aa", "aa");
@@ -57,8 +56,8 @@ int main(void) {
   test("(a+b)?", "a", "");
   test("(a+a+)+", "a", NULL);
   test("a+", "", NULL);
-  // test("(a+|)+", "aa", "aa");
-  // test("(a+|)+", "", "");
+  test("(a+|)+", "aa", "aa");
+  test("(a+|)+", "", "");
   test("(a|b)?", "", "");
   test("(a|b)?", "a", "a");
   test("(a|b)?", "b", "b");
@@ -82,4 +81,6 @@ int main(void) {
   test("a*+a", "aa", NULL);
   test("a++a", "aa", NULL);
   test("a?+a", "a", NULL);
+  test("(a?+)++a", "aaa", NULL);
+  test("(a++)?+a", "aaa", NULL);
 }
