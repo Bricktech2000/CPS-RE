@@ -16,13 +16,68 @@ struct cont {
   struct cont *up;
 };
 
+#define JMP_MATCH 1
+#define JMP_POSS 2
+
+#define POSS_BOUNDARY(STMT)                                                    \
+  do {                                                                         \
+    struct ret *ret_orig = ret;                                                \
+    {                                                                          \
+      struct ret *ret = &(struct ret){NULL};                                   \
+      switch (setjmp(ret->jmp_buf)) {                                          \
+      case 0:                                                                  \
+        STMT return; /* backtrack */                                           \
+      case JMP_MATCH:                                                          \
+        ret_orig->res = ret->res;                                              \
+        longjmp(ret_orig->jmp_buf, JMP_MATCH); /* thread through */            \
+      case JMP_POSS:                                                           \
+        return; /* backtrack */                                                \
+      }                                                                        \
+    }                                                                          \
+  } while (0)
+
 static void match_atom(char *regex, char *input, struct ret *ret,
                        struct cont *cont);
-static void do_star(char *regex, char *input, struct ret *ret,
-                    struct cont *cont) {
-  match_atom(regex, input, ret, &(struct cont){do_star, regex, cont});
+
+static void rep_greedy(char *regex, char *input, struct ret *ret,
+                       struct cont *cont) {
+  match_atom(regex, input, ret, &(struct cont){rep_greedy, regex, cont});
   cont->fp(cont->regex, input, ret, cont->up);
   return; // backtrack
+}
+
+static void opt_greedy(char *regex, char *input, struct ret *ret,
+                       struct cont *cont) {
+  match_atom(regex, input, ret, cont);
+  cont->fp(cont->regex, input, ret, cont->up);
+  return; // backtrack
+}
+
+static void rep_lazy(char *regex, char *input, struct ret *ret,
+                     struct cont *cont) {
+  cont->fp(cont->regex, input, ret, cont->up);
+  match_atom(regex, input, ret, &(struct cont){rep_lazy, regex, cont});
+  return; // backtrack
+}
+
+static void opt_lazy(char *regex, char *input, struct ret *ret,
+                     struct cont *cont) {
+  cont->fp(cont->regex, input, ret, cont->up);
+  match_atom(regex, input, ret, cont);
+  return; // backtrack
+}
+
+static void rep_poss(char *regex, char *input, struct ret *ret,
+                     struct cont *cont) {
+  match_atom(regex, input, ret, &(struct cont){rep_poss, regex, cont});
+  cont->fp(cont->regex, input, ret, cont->up);
+  longjmp(ret->jmp_buf, JMP_POSS); // backtrack
+}
+
+static void opt_poss(char *regex, char *input, struct ret *ret,
+                     struct cont *cont) {
+  cont->fp(cont->regex, input, ret, cont->up);
+  longjmp(ret->jmp_buf, JMP_POSS); // backtrack
 }
 
 static char *skip_symbol(char *regex) {
@@ -87,56 +142,73 @@ static void match_atom(char *regex, char *input, struct ret *ret,
   return; // backtrack
 }
 
-static char *skip_term(char *regex) {
-skip_term:;
+static char *skip_factor(char *regex) {
+  if ((regex = skip_atom(regex)) == NULL)
+    return NULL; // syntax
+  if (*regex && strchr("*+?", *regex))
+    if (*++regex && strchr("+?", *regex))
+      regex++;
+  return regex;
+}
+
+static void match_factor(char *regex, char *input, struct ret *ret,
+                         struct cont *cont) {
   char *quant = skip_atom(regex);
   if (quant == NULL)
-    return regex;
-  if (*quant && strchr("*+?", *quant))
-    quant++;
-  regex = quant;
-  goto skip_term; // tail call
+    return; // syntax
+
+  int lazy = *quant && quant[1] == '?';
+  int poss = *quant && quant[1] == '+';
+
+  switch (*quant) {
+  case '*':
+    if (poss)
+      POSS_BOUNDARY(rep_poss(regex, input, ret, cont););
+    (lazy ? rep_lazy : rep_greedy)(regex, input, ret, cont);
+    return; // backtrack
+  case '+':
+    if (poss)
+      POSS_BOUNDARY(match_atom(regex, input, ret,
+                               &(struct cont){rep_poss, regex, cont}););
+    match_atom(regex, input, ret,
+               &(struct cont){lazy ? rep_lazy : rep_greedy, regex, cont});
+    return; // backtrack
+  case '?':
+    if (poss)
+      POSS_BOUNDARY(
+          match_atom(regex, input, ret, &(struct cont){opt_poss, regex, cont});
+          cont->fp(cont->regex, input, ret, cont->up););
+    (lazy ? opt_lazy : opt_greedy)(regex, input, ret, cont);
+    return; // backtrack
+  default:
+    match_atom(regex, input, ret, cont);
+    return; // backtrack
+  }
+}
+
+static char *skip_term(char *regex) {
+  for (char *term; (term = skip_factor(regex)) != NULL;)
+    regex = term;
+  return regex;
 }
 
 static void match_term(char *regex, char *input, struct ret *ret,
                        struct cont *cont) {
-match_term:;
-  char *quant = skip_atom(regex);
-  if (quant == NULL) {
+  if (skip_factor(regex) == NULL)
     cont->fp(cont->regex, input, ret, cont->up);
-    return; // backtrack
-  }
-
-  switch (*quant) {
-  case '*':
-    do_star(regex, input, ret, &(struct cont){match_term, ++quant, cont});
-    return; // backtrack
-  case '+':
-    match_atom(regex, input, ret,
-               &(struct cont){do_star, regex,
-                              &(struct cont){match_term, ++quant, cont}});
-    return; // backtrack
-  case '?':
-    match_atom(regex, input, ret, &(struct cont){match_term, ++quant, cont});
-    regex = quant;
-    goto match_term; // tail call
-  default:
-    match_atom(regex, input, ret, &(struct cont){match_term, quant, cont});
-    return; // backtrack
-  }
+  match_factor(regex, input, ret,
+               &(struct cont){match_term, skip_factor(regex), cont});
+  return; // backtrack
 }
 
 static char *skip_regex(char *regex) {
-skip_regex:;
-  if (*(regex = skip_term(regex)) != '|')
-    return regex;
-  ++regex;
-  goto skip_regex; // tail call
+  while (*(regex = skip_term(regex)) == '|')
+    regex++;
+  return regex;
 }
 
 static void match_regex(char *regex, char *input, struct ret *ret,
                         struct cont *cont) {
-match_regex:;
   char *alt = skip_term(regex);
   if (*alt != '|') {
     match_term(regex, input, ret, cont);
@@ -144,13 +216,13 @@ match_regex:;
   }
 
   match_term(regex, input, ret, cont);
-  regex = ++alt;
-  goto match_regex; // tail call
+  match_regex(++alt, input, ret, cont);
+  return; // backtrack
 }
 
-static void unwind(char *regex, char *input, struct ret *ret,
-                   struct cont *cont) {
-  ret->res = input, longjmp(ret->jmp_buf, 1);
+static void jmp_match(char *regex, char *input, struct ret *ret,
+                      struct cont *cont) {
+  ret->res = input, longjmp(ret->jmp_buf, JMP_MATCH);
 }
 
 char *cpsre_matches(char *regex, char *input) {
@@ -160,6 +232,6 @@ char *cpsre_matches(char *regex, char *input) {
   struct ret ret;
   if (setjmp(ret.jmp_buf) != 0)
     return ret.res;
-  match_regex(regex, input, &ret, &(struct cont){unwind, NULL, NULL});
+  match_regex(regex, input, &ret, &(struct cont){jmp_match, NULL, NULL});
   return NULL;
 }

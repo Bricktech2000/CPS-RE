@@ -35,6 +35,10 @@ int main(void) {
   test("5-\\?*", "56789:;<=>?X", "56789:;<=>?");
   test("\\(-\\+*", "()*+X", "()*+");
   test("\t-\r*", "\t\n\v\f\rX", "\t\n\v\f\r");
+  test(".", "abc", "a");
+
+  // XXX fix empty repetition
+  // taken from LTRE
   test("()", "", "");
   test("", "\n", "");
   test("\\n", "", CPSRE_SYNTAX);
@@ -52,4 +56,30 @@ int main(void) {
   test("(ab+)?", "b", "");
   test("(a+b)?", "a", "");
   test("(a+a+)+", "a", NULL);
+  test("a+", "", NULL);
+  // test("(a+|)+", "aa", "aa");
+  // test("(a+|)+", "", "");
+  test("(a|b)?", "", "");
+  test("(a|b)?", "a", "a");
+  test("(a|b)?", "b", "b");
+
+  // greedy, lazy, possessive
+  test("a*", "aa", "aa");
+  test("a+", "aa", "aa");
+  test("a?", "a", "a");
+  test("a*a", "aa", "aa");
+  test("a+a", "aa", "aa");
+  test("a?a", "a", "a");
+  test("a*?", "aa", "");
+  test("a+?", "aa", "a");
+  test("a??", "a", "");
+  test("a*?a", "aa", "a");
+  test("a+?a", "aa", "aa");
+  test("a??a", "aa", "a");
+  test("a*+", "aa", "aa");
+  test("a++", "aa", "aa");
+  test("a?+", "a", "a");
+  test("a*+a", "aa", NULL);
+  test("a++a", "aa", NULL);
+  test("a?+a", "a", NULL);
 }
