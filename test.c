@@ -1,12 +1,55 @@
 #include "cps-re.h"
+#include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
+
+void test(char *regex, char *input, char *match) {
+  char *res = cpsre_matches(regex, input);
+
+  if ((res == CPSRE_SYNTAX) != (match == CPSRE_SYNTAX))
+    printf("test failed: /%s/ parse\n", regex);
+  if (res == CPSRE_SYNTAX || match == CPSRE_SYNTAX)
+    return;
+
+  if ((res == NULL) != (match == NULL))
+    goto test_failed;
+  if (res == NULL || match == NULL)
+    return;
+
+  if (strncmp(input, match, res - input) != 0 || match[res - input] != '\0')
+  test_failed:
+    printf("test failed: /%s/ against '%s'\n", regex, input);
+}
 
 int main(void) {
-  char *res[] = {"no match", "syntax", "match"};
-  puts(res[matches("a*b+bc", "abbbbc")]);
-  puts(res[matches("a+*", "abbbbc")]);
-  puts(res[matches("zzz|b+c", "abbbbc")]);
-  puts(res[matches("zzz|ab+c", "abbbbc")]);
-  puts(res[matches("a+b|cd", "abbbbc")]);
-  puts(res[matches("\\n", "abbbbc")]);
+  test("a*b+bc", "abbbbc", "abbbbc");
+  test("a+*", "abbbbc", CPSRE_SYNTAX);
+  test("zzz|b+c", "abbbbc", NULL);
+  test("zzz|ab+c", "abbbbc", "abbbbc");
+  test("a+b|cd", "abbbbc", "ab");
+  test("ab+|cd", "abbbbc", "abbbb");
+  test("\n", "\n", "\n");
+  test("a-z+", "abbbbc", "abbbbc");
+  test("a-z+", "abBBbc", "ab");
+  test("\\.-4*", "./01234X", "./01234");
+  test("5-\\?*", "56789:;<=>?X", "56789:;<=>?");
+  test("\\(-\\+*", "()*+X", "()*+");
+  test("\t-\r*", "\t\n\v\f\rX", "\t\n\v\f\r");
+  test("()", "", "");
+  test("", "\n", "");
+  test("\\n", "", CPSRE_SYNTAX);
+  test(".", "\n", "\n");
+  test("(|n)(\n)", "\n", "\n");
+  test("\r?\n", "\n", "\n");
+  test("\r?\n", "\r\n", "\r\n");
+  // test("(a*)*", "a", "a");
+  test("(a+)+", "aa", "aa");
+  test("(a?)?", "", "");
+  test("a+", "aa", "aa");
+  test("a?", "aa", "a");
+  test("(a+)?", "aa", "aa");
+  test("(ba+)?", "baa", "baa");
+  test("(ab+)?", "b", "");
+  test("(a+b)?", "a", "");
+  test("(a+a+)+", "a", NULL);
 }

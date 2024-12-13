@@ -2,11 +2,11 @@
 #include <setjmp.h>
 #include <string.h>
 
+const char CPSRE_SYNTAX_SENTINEL;
 #define METACHARS "\\.-*+?()|"
 
 struct ret {
-  char *loc;
-  enum res res;
+  char *res;
   jmp_buf jmp_buf;
 };
 
@@ -16,26 +16,23 @@ struct cont {
   struct cont *up;
 };
 
-// XXX doc using explicit returns
-// XXX doc `goto` considered; means tail call
-
 static void match_atom(char *regex, char *input, struct ret *ret,
                        struct cont *cont);
 static void do_star(char *regex, char *input, struct ret *ret,
                     struct cont *cont) {
   match_atom(regex, input, ret, &(struct cont){do_star, regex, cont});
   cont->fp(cont->regex, input, ret, cont->up);
-  return;
+  return; // backtrack
 }
 
 static char *skip_symbol(char *regex) {
   if (*regex == '\\' && regex[1] && strchr(METACHARS, regex[1]))
-    return regex + 2;
+    return ++regex, ++regex;
 
   if (!strchr(METACHARS, *regex))
-    return regex + 1;
+    return ++regex;
 
-  return NULL;
+  return NULL; // syntax
 }
 
 static char match_symbol(char *regex) {
@@ -45,22 +42,49 @@ static char match_symbol(char *regex) {
   if (!strchr(METACHARS, *regex))
     return *regex;
 
-  return '\0';
+  return '\0'; // syntax
 }
 
+static char *skip_regex(char *regex);
 static char *skip_atom(char *regex) {
-  char *end = skip_symbol(regex);
-  return end;
+  if (*regex == '.')
+    return ++regex;
+  if (*regex == '(') {
+    if (*(regex = skip_regex(++regex)) == ')')
+      return ++regex;
+    return NULL; // syntax
+  }
+  regex = skip_symbol(regex);
+  if (regex != NULL && *regex == '-')
+    return skip_symbol(++regex); // (maybe) syntax
+  return regex;                  // (maybe) syntax
 }
 
+static void match_regex(char *regex, char *input, struct ret *ret,
+                        struct cont *cont);
 static void match_atom(char *regex, char *input, struct ret *ret,
                        struct cont *cont) {
-  char sym = match_symbol(regex);
-  if (sym == '\0')
-    return;
-  if (*input == sym)
+  if (*regex == '.' && *input) {
     cont->fp(cont->regex, ++input, ret, cont->up);
-  return;
+    return; // backtrack
+  }
+
+  if (*regex == '(') {
+    if (*skip_regex(++regex) == ')')
+      match_regex(regex, input, ret, cont);
+    return; // backtrack
+  }
+
+  char *sym = skip_symbol(regex);
+  if (sym == NULL)
+    return; // syntax
+  char begin = match_symbol(regex), end = begin;
+  if (*sym == '-')
+    end = match_symbol(++sym);
+
+  if (*input && begin <= *input && *input <= end)
+    cont->fp(cont->regex, ++input, ret, cont->up);
+  return; // backtrack
 }
 
 static char *skip_term(char *regex) {
@@ -71,7 +95,7 @@ skip_term:;
   if (*quant && strchr("*+?", *quant))
     quant++;
   regex = quant;
-  goto skip_term;
+  goto skip_term; // tail call
 }
 
 static void match_term(char *regex, char *input, struct ret *ret,
@@ -80,35 +104,34 @@ match_term:;
   char *quant = skip_atom(regex);
   if (quant == NULL) {
     cont->fp(cont->regex, input, ret, cont->up);
-    return;
+    return; // backtrack
   }
 
   switch (*quant) {
   case '*':
-    do_star(regex, input, ret, &(struct cont){match_term, quant + 1, cont});
-    return;
+    do_star(regex, input, ret, &(struct cont){match_term, ++quant, cont});
+    return; // backtrack
   case '+':
     match_atom(regex, input, ret,
                &(struct cont){do_star, regex,
-                              &(struct cont){match_term, quant + 1, cont}});
-    return;
+                              &(struct cont){match_term, ++quant, cont}});
+    return; // backtrack
   case '?':
-    match_atom(regex, input, ret, &(struct cont){match_term, quant + 1, cont});
-    regex = quant + 1;
-    goto match_term;
+    match_atom(regex, input, ret, &(struct cont){match_term, ++quant, cont});
+    regex = quant;
+    goto match_term; // tail call
   default:
     match_atom(regex, input, ret, &(struct cont){match_term, quant, cont});
-    return;
+    return; // backtrack
   }
 }
 
 static char *skip_regex(char *regex) {
 skip_regex:;
-  char *alt = skip_term(regex);
-  if (*alt != '|')
-    return alt;
-  regex = alt + 1;
-  goto skip_regex;
+  if (*(regex = skip_term(regex)) != '|')
+    return regex;
+  ++regex;
+  goto skip_regex; // tail call
 }
 
 static void match_regex(char *regex, char *input, struct ret *ret,
@@ -117,28 +140,26 @@ match_regex:;
   char *alt = skip_term(regex);
   if (*alt != '|') {
     match_term(regex, input, ret, cont);
-    return;
+    return; // backtrack
   }
 
   match_term(regex, input, ret, cont);
-  regex = alt + 1;
-  goto match_regex;
+  regex = ++alt;
+  goto match_regex; // tail call
 }
 
 static void unwind(char *regex, char *input, struct ret *ret,
                    struct cont *cont) {
-  ret->loc = input, ret->res = MATCH, longjmp(ret->jmp_buf, 1);
+  ret->res = input, longjmp(ret->jmp_buf, 1);
 }
 
-// TODO return loc?
-enum res matches(char *regex, char *input) {
-  char *null = skip_regex(regex);
-  if (*null != '\0')
-    return SYNTAX;
+char *cpsre_matches(char *regex, char *input) {
+  if (*skip_regex(regex) != '\0')
+    return CPSRE_SYNTAX;
 
   struct ret ret;
   if (setjmp(ret.jmp_buf) != 0)
     return ret.res;
   match_regex(regex, input, &ret, &(struct cont){unwind, NULL, NULL});
-  return NOMATCH;
+  return NULL;
 }
