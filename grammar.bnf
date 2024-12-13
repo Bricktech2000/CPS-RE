@@ -1,0 +1,5 @@
+<regex> ::= <term> ("|" <term>)*
+<term> ::= (<atom> (("*" | "+" | "?") ("+" | "?")?)?)*
+<atom> ::= "." | "(" <regex> ")" | <symbol> ("-" <symbol>)?
+<symbol> ::= "\\" <metachar> | (? anything except <metachar> ?)
+<metachar> ::= "\\" | "." | "-" | "*" | "+" | "?" | "(" | ")" | "|"
