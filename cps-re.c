@@ -10,102 +10,89 @@
 const char CPSRE_SYNTAX_SENTINEL;
 #define METACHARS "\\.-*+?()|"
 
-// an "exception thrower" struct that holds knowledge of:
-// - what "exception handler" to jump to next (`jmp_buf`)
-// - where the end of a match is, if `JMP_MATCH` was used (`input`)
-// - how to throw to the parent "exception handler" (`up`)
-struct jmp {
-  jmp_buf jmp_buf;
-  char *input;
-  struct jmp *up;
-};
-
 // a closure that holds knowledge of:
 // - what matcher function to call next (`fp`)
 // - where in the regex to continue matching (`regex`)
 // - what to do when the match is successful (`up`)
 #define CONT(...) (&(struct cont){__VA_ARGS__})
 struct cont {
-  void (*fp)(char *regex, char *input, struct jmp *jmp, struct cont *cont);
+  void (*fp)(char *regex, char *input, struct cont *cont);
   char *regex;
   struct cont *up;
 };
 
-#define JMP_MATCH 1 // `longjmp` to report a match was found
-#define JMP_POSS 2  // `longjmp` to backtrack a possessive quantifier
+// small wrappers around `setjmp` and `longjmp` that let you "nest" and "unset"
+// jump handlers. `LONGJMP(jmplist)` jumps up the stack to the closest `SETJMP
+// (jmplist)` that has a matching `jmplist`. `UNSETJMP(jmplist)` temporarily
+// disables the closest `SETJMP(jmplist)` that has a matching `jmplist`, crucial
+// for continuation-passing style
 
-// creates a backtrack boundary for possessive quantifiers. catches calls to
-// `longjmp(..., JMP_POSS)` but is transparent to `longjmp(..., JMP_MATCH)`
-#define CATCH_POSS(STMT)                                                       \
-  do {                                                                         \
-    struct jmp *up = jmp;                                                      \
-    {                                                                          \
-      struct jmp *jmp = &(struct jmp){.up = up};                               \
-      switch (setjmp(jmp->jmp_buf)) {                                          \
-      case 0:                                                                  \
-        STMT break;                                                            \
-      case JMP_MATCH:                                                          \
-        up->input = jmp->input;                                                \
-        longjmp(up->jmp_buf, JMP_MATCH); /* thread through */                  \
-      case JMP_POSS:                                                           \
-        return; /* backtrack */                                                \
-      }                                                                        \
-    }                                                                          \
-  } while (0)
+struct jmplist {
+  jmp_buf jmp_buf;
+  struct jmplist *up;
+};
 
-static void require_progress(char *prev_input, char *input, struct jmp *jmp,
-                             struct cont *cont) {
-  // backtrack if we've consumed no input since `prev_input`. used in /*/ and
-  // /+/ so regexes like /()*/ and /()+/ don't get stuck
+#define SETJMP(JMPLIST)                                                        \
+  for (struct jmplist *_jmp = &(struct jmplist){.up = JMPLIST}; _jmp;)         \
+    for (JMPLIST = _jmp; _jmp; JMPLIST = _jmp->up, _jmp = NULL)                \
+      if (setjmp(_jmp->jmp_buf) == 0)
+
+#define UNSETJMP(JMPLIST)                                                      \
+  for (struct jmplist *_jmp = JMPLIST; _jmp;)                                  \
+    for (JMPLIST = JMPLIST->up; _jmp; JMPLIST = _jmp, _jmp = NULL)
+
+#define CATCHJMP else
+#define LONGJMP(JMPLIST) longjmp(JMPLIST->jmp_buf, 1)
+
+char *match_input = NULL;        // to store match end when a match is found
+jmp_buf *match_jmp = NULL;       // to unwind the stack when a match is found
+struct jmplist *poss_jmp = NULL; // to backtrack possessive quantifiers
+
+static void require_progress(char *prev_input, char *input, struct cont *cont) {
+  // backtrack if we've consumed no input since `prev_input`. used by `rep_...`
+  // functions so regexes like /()*/ and /()+/ don't get stuck
   if (input != prev_input)
-    cont->fp(cont->regex, input, jmp, cont->up);
+    cont->fp(cont->regex, input, cont->up);
   return; // backtrack
 }
 
-static void match_atom(char *regex, char *input, struct jmp *jmp,
-                       struct cont *cont);
+static void match_atom(char *regex, char *input, struct cont *cont);
 
-static void rep_greedy(char *regex, char *input, struct jmp *jmp,
-                       struct cont *cont) {
-  match_atom(regex, input, jmp,
+static void rep_greedy(char *regex, char *input, struct cont *cont) {
+  match_atom(regex, input,
              CONT(require_progress, input, CONT(rep_greedy, regex, cont)));
-  cont->fp(cont->regex, input, jmp, cont->up);
+  cont->fp(cont->regex, input, cont->up);
   return; // backtrack
 }
 
-static void rep_poss(char *regex, char *input, struct jmp *jmp,
-                     struct cont *cont) {
-  match_atom(regex, input, jmp,
+static void rep_poss(char *regex, char *input, struct cont *cont) {
+  match_atom(regex, input,
              CONT(require_progress, input, CONT(rep_poss, regex, cont)));
-  cont->fp(cont->regex, input, jmp->up, cont->up);
-  longjmp(jmp->jmp_buf, JMP_POSS); // backtrack
+  UNSETJMP(poss_jmp) { cont->fp(cont->regex, input, cont->up); }
+  LONGJMP(poss_jmp); // backtrack
 }
 
-static void rep_lazy(char *regex, char *input, struct jmp *jmp,
-                     struct cont *cont) {
-  cont->fp(cont->regex, input, jmp, cont->up);
-  match_atom(regex, input, jmp,
+static void rep_lazy(char *regex, char *input, struct cont *cont) {
+  cont->fp(cont->regex, input, cont->up);
+  match_atom(regex, input,
              CONT(require_progress, input, CONT(rep_lazy, regex, cont)));
   return; // backtrack
 }
 
-static void opt_greedy(char *regex, char *input, struct jmp *jmp,
-                       struct cont *cont) {
-  match_atom(regex, input, jmp, cont);
-  cont->fp(cont->regex, input, jmp, cont->up);
+static void opt_greedy(char *regex, char *input, struct cont *cont) {
+  match_atom(regex, input, cont);
+  cont->fp(cont->regex, input, cont->up);
   return; // backtrack
 }
 
-static void opt_poss(char *regex, char *input, struct jmp *jmp,
-                     struct cont *cont) {
-  cont->fp(cont->regex, input, jmp->up, cont->up);
-  longjmp(jmp->jmp_buf, JMP_POSS); // backtrack
+static void opt_poss(char *regex, char *input, struct cont *cont) {
+  UNSETJMP(poss_jmp) { cont->fp(cont->regex, input, cont->up); }
+  LONGJMP(poss_jmp); // backtrack
 }
 
-static void opt_lazy(char *regex, char *input, struct jmp *jmp,
-                     struct cont *cont) {
-  cont->fp(cont->regex, input, jmp, cont->up);
-  match_atom(regex, input, jmp, cont);
+static void opt_lazy(char *regex, char *input, struct cont *cont) {
+  cont->fp(cont->regex, input, cont->up);
+  match_atom(regex, input, cont);
   return; // backtrack
 }
 
@@ -142,18 +129,16 @@ static char *skip_atom(char *regex) {
   return regex;                  // syntax or ok
 }
 
-static void match_regex(char *regex, char *input, struct jmp *jmp,
-                        struct cont *cont);
-static void match_atom(char *regex, char *input, struct jmp *jmp,
-                       struct cont *cont) {
+static void match_regex(char *regex, char *input, struct cont *cont);
+static void match_atom(char *regex, char *input, struct cont *cont) {
   if (*regex == '.' && *input) {
-    cont->fp(cont->regex, ++input, jmp, cont->up);
+    cont->fp(cont->regex, ++input, cont->up);
     return; // backtrack
   }
 
   if (*regex == '(') {
     if (*skip_regex(++regex) == ')')
-      match_regex(regex, input, jmp, cont);
+      match_regex(regex, input, cont);
     return; // backtrack or syntax
   }
 
@@ -165,7 +150,7 @@ static void match_atom(char *regex, char *input, struct jmp *jmp,
     end = match_symbol(++sym);
 
   if (*input && begin <= *input && *input <= end)
-    cont->fp(cont->regex, ++input, jmp, cont->up);
+    cont->fp(cont->regex, ++input, cont->up);
   return; // backtrack or syntax
 }
 
@@ -178,8 +163,7 @@ static char *skip_factor(char *regex) {
   return regex;
 }
 
-static void match_factor(char *regex, char *input, struct jmp *jmp,
-                         struct cont *cont) {
+static void match_factor(char *regex, char *input, struct cont *cont) {
   char *quant = skip_atom(regex);
   if (quant == NULL)
     return; // syntax
@@ -189,27 +173,30 @@ static void match_factor(char *regex, char *input, struct jmp *jmp,
 
   switch (*quant) {
   case '*':
-    if (poss)
-      CATCH_POSS(rep_poss(regex, input, jmp, cont););
+    if (!poss)
+      (lazy ? rep_lazy : rep_greedy)(regex, input, cont);
     else
-      (lazy ? rep_lazy : rep_greedy)(regex, input, jmp, cont);
+      SETJMP(poss_jmp) { rep_poss(regex, input, cont); }
     return; // backtrack
   case '+':
-    if (poss)
-      CATCH_POSS(match_atom(regex, input, jmp, CONT(rep_poss, regex, cont)););
+    if (!poss)
+      match_atom(regex, input, CONT(lazy ? rep_lazy : rep_greedy, regex, cont));
     else
-      match_atom(regex, input, jmp,
-                 CONT(lazy ? rep_lazy : rep_greedy, regex, cont));
+      SETJMP(poss_jmp) {
+        match_atom(regex, input, CONT(rep_poss, regex, cont));
+      }
     return; // backtrack
   case '?':
-    if (poss)
-      CATCH_POSS(match_atom(regex, input, jmp, CONT(opt_poss, regex, cont));
-                 cont->fp(cont->regex, input, jmp, cont->up););
+    if (!poss)
+      (lazy ? opt_lazy : opt_greedy)(regex, input, cont);
     else
-      (lazy ? opt_lazy : opt_greedy)(regex, input, jmp, cont);
+      SETJMP(poss_jmp) {
+        match_atom(regex, input, CONT(opt_poss, regex, cont));
+        cont->fp(cont->regex, input, cont->up);
+      }
     return; // backtrack
   default:
-    match_atom(regex, input, jmp, cont);
+    match_atom(regex, input, cont);
     return; // backtrack
   }
 }
@@ -220,15 +207,14 @@ static char *skip_term(char *regex) {
   return regex;
 }
 
-static void match_term(char *regex, char *input, struct jmp *jmp,
-                       struct cont *cont) {
+static void match_term(char *regex, char *input, struct cont *cont) {
   char *term = skip_factor(regex);
   if (term == NULL) {
-    cont->fp(cont->regex, input, jmp, cont->up);
+    cont->fp(cont->regex, input, cont->up);
     return; // backtrack
   }
 
-  match_factor(regex, input, jmp, CONT(match_term, term, cont));
+  match_factor(regex, input, CONT(match_term, term, cont));
   return; // backtrack
 }
 
@@ -238,32 +224,29 @@ static char *skip_regex(char *regex) {
   return regex;
 }
 
-static void match_regex(char *regex, char *input, struct jmp *jmp,
-                        struct cont *cont) {
+static void match_regex(char *regex, char *input, struct cont *cont) {
   char *alt = skip_term(regex);
   if (*alt != '|') {
-    match_term(regex, input, jmp, cont);
+    match_term(regex, input, cont);
     return; // backtrack
   }
 
-  match_term(regex, input, jmp, cont);
-  match_regex(++alt, input, jmp, cont);
+  match_term(regex, input, cont);
+  match_regex(++alt, input, cont);
   return; // backtrack
 }
 
-static void jmp_match(char *regex, char *input, struct jmp *jmp,
-                      struct cont *cont) {
-  // a match was found. unwind the stack
-  jmp->input = input, longjmp(jmp->jmp_buf, JMP_MATCH);
+static void found_match(char *regex, char *input, struct cont *cont) {
+  match_input = input, longjmp(*match_jmp, 1);
 }
 
 char *cpsre_matches(char *regex, char *input) {
   if (*skip_regex(regex) != '\0')
     return CPSRE_SYNTAX; // return sentinel on syntax error
 
-  struct jmp jmp = {.up = NULL};
-  if (setjmp(jmp.jmp_buf) != 0)
-    return jmp.input; // return match end when match found
-  match_regex(regex, input, &jmp, CONT(jmp_match, NULL, NULL));
+  match_jmp = &(jmp_buf){0};
+  if (setjmp(*match_jmp) != 0)
+    return match_input; // return match end when match found
+  match_regex(regex, input, CONT(found_match, NULL, NULL));
   return NULL; // return `NULL` when no match found
 }
