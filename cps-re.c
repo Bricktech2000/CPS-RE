@@ -2,10 +2,9 @@
 #include <setjmp.h>
 #include <string.h>
 
-// this regex engine matches regular expressions in continuation-passing
-// style and uses the hardware call stack as a backtrack stack. this means
-// `return`s and `longjmp`s are actually backtracks. to make sense of the
-// parser refer to `grammar.bnf`
+// this regex engine walks regular expressions in continuation-passing style and
+// uses the call stack as a backtrack stack. this means `return`s and `longjmp`s
+// are actually backtracks. to make sense of the parser refer to `grammar.bnf`
 
 const char CPSRE_SYNTAX_SENTINEL;
 #define METACHARS "\\.-*+?()|"
@@ -44,9 +43,9 @@ struct jmplist {
 #define CATCHJMP else
 #define LONGJMP(JMPLIST) longjmp(JMPLIST->jmp_buf, 1)
 
-char *match_input = NULL;        // to store match end when a match is found
-jmp_buf *match_jmp = NULL;       // to unwind the stack when a match is found
-struct jmplist *poss_jmp = NULL; // to backtrack possessive quantifiers
+static char *match_input = NULL;  // to store match end when a match is found
+static jmp_buf *match_jmp = NULL; // to unwind the stack when a match is found
+static struct jmplist *poss_jmp = NULL; // to backtrack possessive quantifiers
 
 static void require_progress(char *prev_input, char *input, struct cont *cont) {
   // backtrack if we've consumed no input since `prev_input`. used by `rep_...`

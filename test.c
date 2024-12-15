@@ -22,7 +22,6 @@ void test(char *regex, char *input, char *exp) {
 
 int main(void) {
   test("a*b+bc", "abbbbc", "abbbbc");
-  test("a+*", "abbbbc", CPSRE_SYNTAX);
   test("zzz|b+c", "abbbbc", NULL);
   test("zzz|ab+c", "abbbbc", "abbbbc");
   test("a+b|cd", "abbbbc", "ab");
@@ -36,11 +35,22 @@ int main(void) {
   test("\t-\r*", "\t\n\v\f\rX", "\t\n\v\f\r");
   test(".", "abc", "a");
 
-  // taken from LTRE
+  // potential edge cases (mostly from LTRE)
+  test("abba", "abba", "abba");
+  test("(a|b)+", "abba", "abba");
+  test("(a|b)+", "abc", "ab");
+  test(".*", "abba", "abba");
+  test("\x61\\+", "a+", "a+");
+  test("", "", "");
   test("()", "", "");
+  test("()*", "", "");
+  test("()+", "", "");
+  test("()?", "", "");
+  test(" ", " ", " ");
   test("", "\n", "");
-  test("\\n", "", CPSRE_SYNTAX);
+  test("\n", "", NULL);
   test(".", "\n", "\n");
+  test("\\\\n", "\n", NULL);
   test("(|n)(\n)", "\n", "\n");
   test("\r?\n", "\n", "\n");
   test("\r?\n", "\r\n", "\r\n");
@@ -60,6 +70,19 @@ int main(void) {
   test("(a|b)?", "", "");
   test("(a|b)?", "a", "a");
   test("(a|b)?", "b", "b");
+
+  // parse errors (mostly from LTRE)
+  test("abc)", "", CPSRE_SYNTAX);
+  test("(abc", "", CPSRE_SYNTAX);
+  test("+a", "", CPSRE_SYNTAX);
+  test("a|*", "", CPSRE_SYNTAX);
+  test("\\x0", "", CPSRE_SYNTAX);
+  test("\\zzz", "", CPSRE_SYNTAX);
+  test("\\b", "", CPSRE_SYNTAX);
+  test("\\t", "", CPSRE_SYNTAX);
+  test("a**", "", CPSRE_SYNTAX);
+  test("a+*", "", CPSRE_SYNTAX);
+  test("a?*", "", CPSRE_SYNTAX);
 
   // greedy, lazy, possessive
   test("a*", "aa", "aa");
