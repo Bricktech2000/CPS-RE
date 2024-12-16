@@ -55,6 +55,14 @@ static void require_progress(char *prev_input, char *input, struct cont *cont) {
   return; // backtrack
 }
 
+static void commit_possessive(char *regex, char *input, struct cont *cont) {
+  // run the continuation, but if it backtracks, jump to a "backtrack
+  // checkpoint" for possessive quantifiers. this effectively "locks in"
+  // a possessive quantifier
+  UNSETJMP(poss_jmp) { cont->fp(cont->regex, input, cont->up); }
+  LONGJMP(poss_jmp); // backtrack
+}
+
 static void match_atom(char *regex, char *input, struct cont *cont);
 
 static void rep_greedy(char *regex, char *input, struct cont *cont) {
@@ -67,31 +75,13 @@ static void rep_greedy(char *regex, char *input, struct cont *cont) {
 static void rep_poss(char *regex, char *input, struct cont *cont) {
   match_atom(regex, input,
              CONT(require_progress, input, CONT(rep_poss, regex, cont)));
-  UNSETJMP(poss_jmp) { cont->fp(cont->regex, input, cont->up); }
-  LONGJMP(poss_jmp); // backtrack
+  commit_possessive(regex, input, cont); // never returns
 }
 
 static void rep_lazy(char *regex, char *input, struct cont *cont) {
   cont->fp(cont->regex, input, cont->up);
   match_atom(regex, input,
              CONT(require_progress, input, CONT(rep_lazy, regex, cont)));
-  return; // backtrack
-}
-
-static void opt_greedy(char *regex, char *input, struct cont *cont) {
-  match_atom(regex, input, cont);
-  cont->fp(cont->regex, input, cont->up);
-  return; // backtrack
-}
-
-static void opt_poss(char *regex, char *input, struct cont *cont) {
-  UNSETJMP(poss_jmp) { cont->fp(cont->regex, input, cont->up); }
-  LONGJMP(poss_jmp); // backtrack
-}
-
-static void opt_lazy(char *regex, char *input, struct cont *cont) {
-  cont->fp(cont->regex, input, cont->up);
-  match_atom(regex, input, cont);
   return; // backtrack
 }
 
@@ -187,10 +177,13 @@ static void match_factor(char *regex, char *input, struct cont *cont) {
     return; // backtrack
   case '?':
     if (!poss)
-      (lazy ? opt_lazy : opt_greedy)(regex, input, cont);
+      if (lazy)
+        cont->fp(cont->regex, input, cont->up), match_atom(regex, input, cont);
+      else
+        match_atom(regex, input, cont), cont->fp(cont->regex, input, cont->up);
     else
       SETJMP(poss_jmp) {
-        match_atom(regex, input, CONT(opt_poss, regex, cont));
+        match_atom(regex, input, CONT(commit_possessive, regex, cont));
         cont->fp(cont->regex, input, cont->up);
       }
     return; // backtrack
