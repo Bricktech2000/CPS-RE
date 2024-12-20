@@ -1,5 +1,6 @@
 #include "cps-re.h"
 #include <setjmp.h>
+#include <stdbool.h>
 #include <string.h>
 
 // this regex engine walks regular expressions in continuation-passing style and
@@ -7,7 +8,7 @@
 // are actually backtracks. to make sense of the parser refer to `grammar.bnf`
 
 const char CPSRE_SYNTAX_SENTINEL;
-#define METACHARS "\\.-*+?()|"
+#define METACHARS "\\.-^$*+?()|"
 
 // a closure that holds knowledge of:
 // - what matcher function to call next (`fp`)
@@ -43,7 +44,7 @@ struct jmplist {
 #define CATCHJMP else
 #define LONGJMP(JMPLIST) longjmp(JMPLIST->jmp_buf, 1)
 
-static char *match_input = NULL;  // to store match end when a match is found
+static char *match_end = NULL;    // to store match end when a match is found
 static jmp_buf *match_jmp = NULL; // to unwind the stack when a match is found
 static struct jmplist *poss_jmp = NULL; // to backtrack possessive quantifiers
 
@@ -105,13 +106,14 @@ static char match_symbol(char *regex) {
 
 static char *skip_regex(char *regex);
 static char *skip_atom(char *regex) {
-  if (*regex == '.')
-    return ++regex;
   if (*regex == '(') {
     if (*(regex = skip_regex(++regex)) == ')')
       return ++regex;
     return NULL; // syntax
   }
+  *regex == '^' && regex++;
+  if (*regex == '.')
+    return ++regex;
   regex = skip_symbol(regex);
   if (regex != NULL && *regex == '-')
     return skip_symbol(++regex); // syntax or ok
@@ -120,25 +122,31 @@ static char *skip_atom(char *regex) {
 
 static void match_regex(char *regex, char *input, struct cont *cont);
 static void match_atom(char *regex, char *input, struct cont *cont) {
-  if (*regex == '.' && *input) {
-    cont->fp(cont->regex, ++input, cont->up);
-    return; // backtrack
-  }
-
   if (*regex == '(') {
     if (*skip_regex(++regex) == ')')
       match_regex(regex, input, cont);
     return; // backtrack or syntax
   }
 
+  bool complement = *regex == '^' && regex++;
+
+  if (*regex == '.' && *input && true ^ complement) {
+    cont->fp(cont->regex, ++input, cont->up);
+    return; // backtrack
+  }
+
   char *sym = skip_symbol(regex);
   if (sym == NULL)
     return; // syntax
-  char begin = match_symbol(regex), end = begin;
+  char begin = match_symbol(regex), end = begin, temp;
   if (*sym == '-')
     end = match_symbol(++sym);
 
-  if (*input && begin <= *input && *input <= end)
+  // character range wraparound
+  if (begin > end)
+    temp = end, end = begin - 1, begin = temp + 1, complement = !complement;
+
+  if (*input && (begin <= *input && *input <= end) ^ complement)
     cont->fp(cont->regex, ++input, cont->up);
   return; // backtrack or syntax
 }
@@ -157,8 +165,8 @@ static void match_factor(char *regex, char *input, struct cont *cont) {
   if (quant == NULL)
     return; // syntax
 
-  int poss = *quant && quant[1] == '+';
-  int lazy = *quant && quant[1] == '?';
+  bool poss = *quant && quant[1] == '+';
+  bool lazy = *quant && quant[1] == '?';
 
   switch (*quant) {
   case '*':
@@ -229,16 +237,28 @@ static void match_regex(char *regex, char *input, struct cont *cont) {
 }
 
 static void found_match(char *regex, char *input, struct cont *cont) {
-  match_input = input, longjmp(*match_jmp, 1);
+  match_end = input, longjmp(*match_jmp, 1);
 }
 
-char *cpsre_matches(char *regex, char *input) {
+char *cpsre_match_end(char *regex, char *input) {
   if (*skip_regex(regex) != '\0')
-    return CPSRE_SYNTAX; // return sentinel on syntax error
+    return CPSRE_SYNTAX;
 
   match_jmp = &(jmp_buf){0};
   if (setjmp(*match_jmp) != 0)
-    return match_input; // return match end when match found
+    return match_end;
   match_regex(regex, input, CONT(found_match, NULL, NULL));
-  return NULL; // return `NULL` when no match found
+  return NULL;
+}
+
+char *cpsre_match_begin(char *regex, char *input) {
+  if (cpsre_match_end(regex, "") == CPSRE_SYNTAX)
+    return CPSRE_SYNTAX;
+
+  do {
+    if (cpsre_match_end(regex, input) != NULL)
+      return input;
+  } while (*input++);
+
+  return NULL;
 }
