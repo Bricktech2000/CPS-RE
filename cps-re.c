@@ -7,13 +7,14 @@
 // uses the call stack as a backtrack stack. this means `return`s and `longjmp`s
 // are actually backtracks. to make sense of the parser refer to `grammar.bnf`
 
-const char CPSRE_SYNTAX_SENTINEL;
-#define METACHARS "\\.-^$*+?()|"
+#define METACHARS "\\.-^$*+?()|&~"
 
 // a closure that holds knowledge of:
 // - what matcher function to call next (`fp`)
 // - where in the regex to continue matching (`regex`)
 // - what to do when the match is successful (`up`)
+// not all functions we store in `cont->fp` take a `regex` as their first
+// argument, so often we repurpose `cont->regex` to store something else
 #define CONT(...) (&(struct cont){__VA_ARGS__})
 struct cont {
   void (*fp)(char *regex, char *input, struct cont *cont);
@@ -44,9 +45,17 @@ struct jmplist {
 #define CATCHJMP else
 #define LONGJMP(JMPLIST) longjmp(JMPLIST->jmp_buf, 1)
 
-static char *match_end = NULL;    // to store match end when a match is found
-static jmp_buf *match_jmp = NULL; // to unwind the stack when a match is found
-static struct jmplist *poss_jmp = NULL; // to backtrack possessive quantifiers
+static char *match_end;           // to store match end when a match is found
+static struct jmplist *match_jmp; // to unwind the stack when a match is found
+static struct jmplist *poss_jmp;  // to backtrack possessive quantifiers
+
+static void found_match(char *target, char *input, struct cont *_cont) {
+  // report a match by unwinding the stack to the closest `SETJMP(match_jmp)`.
+  // if `target` is not null, only do so when the match found ends at `target`
+  if (target == NULL || input == target)
+    match_end = input, LONGJMP(match_jmp);
+  return; // backtrack
+}
 
 static void require_progress(char *prev_input, char *input, struct cont *cont) {
   // backtrack if we've consumed no input since `prev_input`. used by `rep_...`
@@ -56,7 +65,7 @@ static void require_progress(char *prev_input, char *input, struct cont *cont) {
   return; // backtrack
 }
 
-static void commit_possessive(char *regex, char *input, struct cont *cont) {
+static void commit_possessive(char *_regex, char *input, struct cont *cont) {
   // run the continuation, but if it backtracks, jump to a "backtrack
   // checkpoint" for possessive quantifiers. this effectively "locks in"
   // a possessive quantifier
@@ -76,7 +85,7 @@ static void rep_greedy(char *regex, char *input, struct cont *cont) {
 static void rep_poss(char *regex, char *input, struct cont *cont) {
   match_atom(regex, input,
              CONT(require_progress, input, CONT(rep_poss, regex, cont)));
-  commit_possessive(regex, input, cont); // never returns
+  commit_possessive(NULL, input, cont); // never returns
 }
 
 static void rep_lazy(char *regex, char *input, struct cont *cont) {
@@ -86,44 +95,34 @@ static void rep_lazy(char *regex, char *input, struct cont *cont) {
   return; // backtrack
 }
 
-static char *skip_symbol(char *regex) {
+static char *parse_symbol(char *regex, char *sym) {
   if (!strchr(METACHARS, *regex))
-    return ++regex;
+    return *sym = *regex, ++regex;
   if (*regex == '\\' && *++regex && strchr(METACHARS, *regex))
-    return ++regex;
+    return *sym = *regex, ++regex;
   return NULL; // syntax
 }
 
-static char match_symbol(char *regex) {
-  if (!strchr(METACHARS, *regex))
-    return *regex;
-
-  if (*regex == '\\' && *++regex && strchr(METACHARS, *regex))
-    return *regex;
-
-  return '\0'; // syntax
-}
-
-static char *skip_regex(char *regex);
-static char *skip_atom(char *regex) {
+static char *parse_regex(char *regex);
+static char *parse_atom(char *regex) {
   if (*regex == '(') {
-    if (*(regex = skip_regex(++regex)) == ')')
+    if (*(regex = parse_regex(++regex)) == ')')
       return ++regex;
     return NULL; // syntax
   }
   *regex == '^' && regex++;
   if (*regex == '.')
     return ++regex;
-  regex = skip_symbol(regex);
+  regex = parse_symbol(regex, &(char){0});
   if (regex != NULL && *regex == '-')
-    return skip_symbol(++regex); // syntax or ok
-  return regex;                  // syntax or ok
+    return parse_symbol(++regex, &(char){0}); // syntax or ok
+  return regex;                               // syntax or ok
 }
 
 static void match_regex(char *regex, char *input, struct cont *cont);
 static void match_atom(char *regex, char *input, struct cont *cont) {
   if (*regex == '(') {
-    if (*skip_regex(++regex) == ')')
+    if (*parse_regex(++regex) == ')')
       match_regex(regex, input, cont);
     return; // backtrack or syntax
   }
@@ -135,12 +134,12 @@ static void match_atom(char *regex, char *input, struct cont *cont) {
     return; // backtrack
   }
 
-  char *sym = skip_symbol(regex);
-  if (sym == NULL)
-    return; // syntax
-  char begin = match_symbol(regex), end = begin, temp;
-  if (*sym == '-')
-    end = match_symbol(++sym);
+  char begin, end, temp;
+  regex = parse_symbol(regex, &begin), end = begin;
+  if (regex != NULL && *regex == '-')
+    regex = parse_symbol(++regex, &end);
+  if (regex == NULL)
+    return;
 
   // character range wraparound
   if (begin > end)
@@ -151,8 +150,8 @@ static void match_atom(char *regex, char *input, struct cont *cont) {
   return; // backtrack or syntax
 }
 
-static char *skip_factor(char *regex) {
-  if ((regex = skip_atom(regex)) == NULL)
+static char *parse_factor(char *regex) {
+  if ((regex = parse_atom(regex)) == NULL)
     return NULL; // syntax
   if (*regex && strchr("*+?", *regex))
     if (*++regex && strchr("+?", *regex))
@@ -161,7 +160,7 @@ static char *skip_factor(char *regex) {
 }
 
 static void match_factor(char *regex, char *input, struct cont *cont) {
-  char *quant = skip_atom(regex);
+  char *quant = parse_atom(regex);
   if (quant == NULL)
     return; // syntax
 
@@ -191,8 +190,8 @@ static void match_factor(char *regex, char *input, struct cont *cont) {
         match_atom(regex, input, cont), cont->fp(cont->regex, input, cont->up);
     else
       SETJMP(poss_jmp) {
-        match_atom(regex, input, CONT(commit_possessive, regex, cont));
-        cont->fp(cont->regex, input, cont->up);
+        match_atom(regex, input, CONT(commit_possessive, NULL, cont));
+        UNSETJMP(poss_jmp) { cont->fp(cont->regex, input, cont->up); }
       }
     return; // backtrack
   default:
@@ -201,62 +200,89 @@ static void match_factor(char *regex, char *input, struct cont *cont) {
   }
 }
 
-static char *skip_term(char *regex) {
-  for (char *term; (term = skip_factor(regex)) != NULL;)
+static char *parse_term(char *regex) {
+  if (*regex == '~')
+    regex++;
+  for (char *term; (term = parse_factor(regex)) != NULL;)
     regex = term;
   return regex;
 }
 
 static void match_term(char *regex, char *input, struct cont *cont) {
-  char *term = skip_factor(regex);
+  if (*regex == '~' && *++regex != '~') {
+    // check whether the term being complemented matches the next 'n' characters
+    // of input, starting with 'n := 0'. if it does not, call the continuation
+    // to proceed; if it does, or if the continuation backtracks, try again with
+    // 'n := n + 1' characters of input. unfortunately this overrules quantifier
+    // greediness and laziness, meaning identities like `~(~a) == a` and `a&b ==
+    // ~(~a|~b)` and `a|b == ~(~a&~b)` won't hold in general for partial matches
+    char *target = input;
+    do {
+      SETJMP(match_jmp) {
+        match_term(regex, input, CONT(found_match, target, NULL));
+        UNSETJMP(match_jmp) { cont->fp(cont->regex, target, cont->up); }
+      }
+    } while (*target++);
+
+    return; // backtrack
+  }
+
+  char *term = parse_factor(regex);
   if (term == NULL) {
     cont->fp(cont->regex, input, cont->up);
     return; // backtrack
   }
 
-  match_factor(regex, input, CONT(match_term, term, cont));
+  match_factor(regex, input,
+               *term == '~' ? cont : CONT(match_term, term, cont));
   return; // backtrack
 }
 
-static char *skip_regex(char *regex) {
-  while (*(regex = skip_term(regex)) == '|')
+static char *parse_regex(char *regex) {
+  while (regex = parse_term(regex), *regex == '|' || *regex == '&')
     regex++;
   return regex;
 }
 
-static void match_regex(char *regex, char *input, struct cont *cont) {
-  char *alt = skip_term(regex);
-  if (*alt != '|') {
-    match_term(regex, input, cont);
-    return; // backtrack
-  }
-
-  match_term(regex, input, cont);
-  match_regex(++alt, input, cont);
+static void int_rhs(char *regex, char *input, struct cont *cont) {
+  // the left-hand side of the intersection matched (beginning at input position
+  // `cont->regex` and ending at input position `input`), so check if we can get
+  // the right-hand side to exact-match at those positions
+  if (cpsre_anchored(regex, cont->regex, input) != NULL)
+    cont = cont->up, cont->fp(cont->regex, input, cont->up);
   return; // backtrack
 }
 
-static void found_match(char *regex, char *input, struct cont *cont) {
-  match_end = input, longjmp(*match_jmp, 1);
+static void match_regex(char *regex, char *input, struct cont *cont) {
+  char *binop = parse_term(regex);
+
+  // alternation and intersection are right-associative
+  if (*binop == '|')
+    match_term(regex, input, cont), match_regex(++binop, input, cont);
+  else if (*binop == '&')
+    // if the left-hand side of the intersection matches, call `intr_rhs` with
+    // a dummy continuation that holds the `input` position before the match
+    match_term(regex, input, CONT(int_rhs, ++binop, CONT(NULL, input, cont)));
+  else
+    match_term(regex, input, cont);
+
+  return; // backtrack
 }
 
-char *cpsre_match_end(char *regex, char *input) {
-  if (*skip_regex(regex) != '\0')
-    return CPSRE_SYNTAX;
+char *cpsre_parse(char *regex) { return parse_regex(regex); }
 
-  match_jmp = &(jmp_buf){0};
-  if (setjmp(*match_jmp) != 0)
-    return match_end;
-  match_regex(regex, input, CONT(found_match, NULL, NULL));
-  return NULL;
+char *cpsre_anchored(char *regex, char *input, char *target) {
+  SETJMP(match_jmp) {
+    match_regex(regex, input, CONT(found_match, target, NULL));
+    UNSETJMP(match_jmp) { return NULL; }
+  }
+
+  return match_end;
 }
 
-char *cpsre_match_begin(char *regex, char *input) {
-  if (cpsre_match_end(regex, "") == CPSRE_SYNTAX)
-    return CPSRE_SYNTAX;
-
+char *cpsre_unanchored(char *regex, char *input, char *target) {
   do {
-    if (cpsre_match_end(regex, input) != NULL)
+    if (cpsre_anchored(regex, input, target) != NULL)
       return input;
   } while (*input++);
 
