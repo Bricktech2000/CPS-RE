@@ -85,6 +85,11 @@ int main(void) {
   test("()*", "", "", true);
   test("()+", "", "", true);
   test("()?", "", "", true);
+  test("(())", "", "", true);
+  test("()()", "", "", true);
+  test("()", "a", "", false);
+  test("a()", "a", "a", true);
+  test("()a", "a", "a", true);
   test(" ", " ", " ", true);
   test("", "\n", "", false);
   test("\n", "", NULL, false);

@@ -10,6 +10,6 @@ Alternation and intersection are right-associative. Prefixing a character or cha
 
 Run the test suite with:
 
-```bash
+```sh
 make test && bin/test
 ```
