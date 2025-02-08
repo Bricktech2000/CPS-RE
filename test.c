@@ -10,7 +10,7 @@ void dump(char *begin, char *end, char delim) {
     printf("no match");
   else {
     putchar(delim);
-    for (; end == NULL ? *begin : begin < end; begin++)
+    for (; *begin && (end == NULL || begin < end); begin++)
       printf(isprint(*begin) && *begin != '\\' ? "%c" : "\\x%02hhx", *begin);
     putchar(delim);
   }
@@ -60,9 +60,6 @@ void test(char *regex, char *input, char *partial, bool exact) {
 }
 
 int main(void) {
-  test("\n", "\n", "\n", true);
-  test("\t-\r+", "\t\n\v\f\r", "\t\n\v\f\r", true);
-
   // potential edge cases (mostly from LTRE)
   test("abba", "abba", "abba", true);
   test("ab|abba", "abba", "ab", true);
@@ -92,7 +89,7 @@ int main(void) {
   test("()a", "a", "a", true);
   test(" ", " ", " ", true);
   test("", "\n", "", false);
-  test("\n", "", NULL, false);
+  test("\n", "\n", "\n", true);
   test(".", "\n", "\n", true);
   test("\\\\n", "\n", NULL, false);
   test("(|n)(\n)", "\n", "\n", true);
@@ -184,6 +181,7 @@ int main(void) {
   test("\\.-4+", "./01234", "./01234", true);
   test("5-\\?+", "56789:;<=>?", "56789:;<=>?", true);
   test("\\(-\\++", "()*+", "()*+", true);
+  test("\t-\r+", "\t\n\v\f\r", "\t\n\v\f\r", true);
   test("~0*", "", NULL, false);
   test("~0*", "0", NULL, false);
   test("~0*", "00", NULL, false);
@@ -228,6 +226,21 @@ int main(void) {
   test(HEX_RGB, "#00ff", "#00f", false);
   test(HEX_RGB, "#abcdef", "#abcdef", true);
   test(HEX_RGB, "#abcdeff", "#abcdef", false);
+#define BLOCK_COMMENT "/\\*(~.*\\*/.*)\\*/"
+#define LINE_COMMENT "//^\n*\n"
+#define COMMENT BLOCK_COMMENT "|" LINE_COMMENT
+  test(COMMENT, "// */\n", "// */\n", true);
+  test(COMMENT, "// //\n", "// //\n", true);
+  test(COMMENT, "/* */", "/* */", true);
+  test(COMMENT, "/*/", NULL, false);
+  test(COMMENT, "/*/*/", "/*/*/", true);
+  test(COMMENT, "/**/*/", "/**/", false);
+  test(COMMENT, "/*/**/*/", "/*/**/", false);
+  test(COMMENT, "/*//*/", "/*//*/", true);
+  test(COMMENT, "/**/\n", "/**/", false);
+  test(COMMENT, "//**/\n", "//**/\n", true);
+  test(COMMENT, "///*\n*/", "///*\n", false);
+  test(COMMENT, "//\n\n", "//\n", false);
 #define FIELD_WIDTH "(\\*|1-90-9*)?"
 #define PRECISION "(\\.(\\*|1-90-9*)?)?"
 #define DI "(\\-|\\+| |0)*" FIELD_WIDTH PRECISION "(hh|ll|h|l|j|z|t)?(d|i)"

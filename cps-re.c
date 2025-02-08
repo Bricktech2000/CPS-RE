@@ -134,18 +134,18 @@ static void match_atom(char *regex, char *input, struct cont *cont) {
     return; // backtrack
   }
 
-  char begin, end, temp;
-  regex = parse_symbol(regex, &begin), end = begin;
+  char lower, upper, temp;
+  regex = parse_symbol(regex, &lower), upper = lower;
   if (regex != NULL && *regex == '-')
-    regex = parse_symbol(++regex, &end);
+    regex = parse_symbol(++regex, &upper);
   if (regex == NULL)
     return;
 
   // character range wraparound
-  if (begin > end)
-    temp = end, end = begin - 1, begin = temp + 1, complement = !complement;
+  if (lower > upper)
+    temp = upper, upper = lower - 1, lower = temp + 1, complement = !complement;
 
-  if (*input && (begin <= *input && *input <= end) ^ complement)
+  if (*input && (lower <= *input && *input <= upper) ^ complement)
     cont->fp(cont->regex, ++input, cont->up);
   return; // backtrack or syntax
 }
