@@ -182,6 +182,9 @@ int main(void) {
   test("5-\\?+", "56789:;<=>?", "56789:;<=>?", true);
   test("\\(-\\++", "()*+", "()*+", true);
   test("\t-\r+", "\t\n\v\f\r", "\t\n\v\f\r", true);
+  test("~", "", NULL, false);
+  test("~", "a", "a", true);
+  test("~", "aa", "a", true);
   test("~0*", "", NULL, false);
   test("~0*", "0", NULL, false);
   test("~0*", "00", NULL, false);

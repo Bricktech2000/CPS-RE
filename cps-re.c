@@ -228,13 +228,12 @@ static void match_term(char *regex, char *input, struct cont *cont) {
   }
 
   char *term = parse_factor(regex);
-  if (term == NULL) {
+  if (term == NULL || *term == '~') {
     cont->fp(cont->regex, input, cont->up);
     return; // backtrack
   }
 
-  match_factor(regex, input,
-               *term == '~' ? cont : CONT(match_term, term, cont));
+  match_factor(regex, input, CONT(match_term, term, cont));
   return; // backtrack
 }
 
