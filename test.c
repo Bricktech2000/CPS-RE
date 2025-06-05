@@ -111,6 +111,22 @@ int main(void) {
   test("(a|b)?", "", "", true);
   test("(a|b)?", "a", "a", true);
   test("(a|b)?", "b", "b", true);
+  test("x*|", "xx", "xx", true);
+  test("x*|", "", "", true);
+  test("x+|", "xx", "xx", true);
+  test("x+|", "", "", true);
+  test("x?|", "x", "x", true);
+  test("x?|", "", "", true);
+  test("x*y*", "yx", "y", false);
+  test("x+y+", "yx", NULL, false);
+  test("x?y?", "yx", "y", false);
+  test("x+y*", "xyx", "xy", false);
+  test("x*y+", "yxy", "y", false);
+  test("x*|y*", "xy", "x", false);
+  test("x+|y+", "xy", "x", false);
+  test("x?|y?", "xy", "x", false);
+  test("x+|y*", "xy", "x", false);
+  test("x*|y+", "xy", "x", false);
 
   // greedy, lazy, possessive
   test("a*", "aa", "aa", true);
@@ -182,6 +198,9 @@ int main(void) {
   test("5-\\?+", "56789:;<=>?", "56789:;<=>?", true);
   test("\\(-\\++", "()*+", "()*+", true);
   test("\t-\r+", "\t\n\v\f\r", "\t\n\v\f\r", true);
+  test("~", "", NULL, false);
+  test("~", "a", "a", true);
+  test("~", "aa", "a", true);
   test("~0*", "", NULL, false);
   test("~0*", "0", NULL, false);
   test("~0*", "00", NULL, false);
