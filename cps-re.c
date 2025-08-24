@@ -7,7 +7,7 @@
 // uses the call stack as a backtrack stack. this means `return`s and `longjmp`s
 // are actually backtracks. to make sense of the parser refer to `grammar.bnf`
 
-#define METACHARS "\\.-^$*+?()|&~"
+#define METACHARS "\\-.~%*+?|&!()"
 
 // a closure that holds knowledge of:
 // - what matcher function to call next (`fp`)
@@ -105,12 +105,14 @@ static char *parse_symbol(char *regex, char *sym) {
 
 static char *parse_regex(char *regex);
 static char *parse_atom(char *regex) {
+  if (*regex == '%')
+    return ++regex;
   if (*regex == '(') {
     if (*(regex = parse_regex(++regex)) == ')')
       return ++regex;
     return NULL; // syntax
   }
-  *regex == '^' && regex++;
+  *regex == '~' && regex++;
   if (*regex == '.')
     return ++regex;
   regex = parse_symbol(regex, &(char){0});
@@ -121,13 +123,20 @@ static char *parse_atom(char *regex) {
 
 static void match_regex(char *regex, char *input, struct cont *cont);
 static void match_atom(char *regex, char *input, struct cont *cont) {
+  if (*regex == '%') {
+    cont->fp(cont->regex, input, cont->up);
+    if (*input)
+      match_atom(regex, ++input, cont);
+    return; // backtrack
+  }
+
   if (*regex == '(') {
     if (*parse_regex(++regex) == ')')
       match_regex(regex, input, cont);
     return; // backtrack or syntax
   }
 
-  bool complement = *regex == '^' && regex++;
+  bool complement = *regex == '~' && regex++;
 
   if (*regex == '.' && *input && true ^ complement) {
     cont->fp(cont->regex, ++input, cont->up);
@@ -201,7 +210,7 @@ static void match_factor(char *regex, char *input, struct cont *cont) {
 }
 
 static char *parse_term(char *regex) {
-  if (*regex == '~')
+  if (*regex == '!')
     regex++;
   for (char *term; (term = parse_factor(regex)) != NULL;)
     regex = term;
@@ -209,13 +218,13 @@ static char *parse_term(char *regex) {
 }
 
 static void match_term(char *regex, char *input, struct cont *cont) {
-  if (*regex == '~' && *++regex != '~') {
+  if (*regex == '!' && *++regex != '!') {
     // check whether the term being complemented matches the next 'n' characters
     // of input, starting with 'n := 0'. if it does not, call the continuation
     // to proceed; if it does, or if the continuation backtracks, try again with
     // 'n := n + 1' characters of input. unfortunately this overrules quantifier
-    // greediness and laziness, meaning identities like `~(~a) == a` and `a&b ==
-    // ~(~a|~b)` and `a|b == ~(~a&~b)` won't hold in general for partial matches
+    // greediness and laziness, meaning identities like `!(!a) == a` and `a&b ==
+    // !(!a|!b)` and `a|b == !(!a&!b)` won't hold in general for partial matches
     char *target = input;
     do {
       SETJMP(match_jmp) {
@@ -228,7 +237,7 @@ static void match_term(char *regex, char *input, struct cont *cont) {
   }
 
   char *term = parse_factor(regex);
-  if (term == NULL || *term == '~') {
+  if (term == NULL || *term == '!') {
     cont->fp(cont->regex, input, cont->up);
     return; // backtrack
   }
@@ -259,8 +268,8 @@ static void match_regex(char *regex, char *input, struct cont *cont) {
   if (*binop == '|')
     match_term(regex, input, cont), match_regex(++binop, input, cont);
   else if (*binop == '&')
-    // if the left-hand side of the intersection matches, call `intr_rhs` with
-    // a dummy continuation that holds the `input` position before the match
+    // if the left-hand side of the intersection matches, call `int_rhs` with a
+    // dummy continuation that holds the `input` position before the match
     match_term(regex, input, CONT(int_rhs, ++binop, CONT(NULL, input, cont)));
   else
     match_term(regex, input, cont);
