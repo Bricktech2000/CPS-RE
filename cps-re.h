@@ -10,10 +10,10 @@ char *cpsre_parse(char *regex);
 // matches will end one character before `target`, and otherwise matches can
 // end at any position. `input` must be null-terminated even when a non-null
 // `target` is supplied. assuming `end` is a pointer to the end of `input`,
-// - `cpsre_anchored(..., end)` matches /regex/
-// - `cpsre_anchored(..., NULL)` matches /regex.*/
-// - `cpsre_unanchored(..., end)` matches /.*regex/
-// - `cpsre_unanchored(..., NULL)` matches /.*regex.*/
+//   - `cpsre_anchored(..., end)` matches /regex/
+//   - `cpsre_anchored(..., NULL)` matches /regex.*/
+//   - `cpsre_unanchored(..., end)` matches /.*regex/
+//   - `cpsre_unanchored(..., NULL)` matches /.*regex.*/
 // for a partial match, run `cpsre_unanchored(..., NULL)` to get the beginning
 // of the match; if a match is found, run `cpsre_anchored(..., NULL)` to get
 // the end of the match. for an exact match, run `cpsre_anchored(..., end)`,
