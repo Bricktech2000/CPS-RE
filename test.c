@@ -493,6 +493,21 @@ int main(void) {
   test(UTF8_CHARS, "\xc2\x7f", "", false);     // bad tail
   test(UTF8_CHARS, "\xe2\x28\xa1", "", false); // bad tail
   test(UTF8_CHARS, "\x80x/", "", false);
+#define OCTET "(250-5|(20-4|10-9|1-9?)0-9)"
+#define IPV4 OCTET "\\." OCTET "\\." OCTET "\\." OCTET
+  test(IPV4, "0.0.0.0", "0.0.0.0", true);
+  test(IPV4, "1.1.1.1", "1.1.1.1", true);
+  test(IPV4, "10.0.0.4", "10.0.0.4", true);
+  test(IPV4, "127.0.0.1", "127.0.0.1", true);
+  test(IPV4, "192.168.0.1", "192.168.0.1", true);
+  test(IPV4, "55.148.8.11", "55.148.8.11", true);
+  test(IPV4, "255.255.255.255", "255.255.255.255", true);
+  test(IPV4, "1..1.1", NULL, false);
+  test(IPV4, "0.0.0.0.", "0.0.0.0", false);
+  test(IPV4, ".0.0.0.0", "0.0.0.0", false);
+  test(IPV4, "1.1.01.1", NULL, false);
+  test(IPV4, "10.0.0.256", "10.0.0.25", false);
+  test(IPV4, "12.224.29.25.149", "12.224.29.25", false);
 #define FA_PATH(TRANS) "A-Z(0-1A-Z)*&!%(A-Z0-1A-Z&!(" TRANS "))%"
 #define ACCEPT FA_PATH("A1B|A0D|D0D|D1D|B1B|C1B|B0C|C0C") "&A%%C"
 #define REJECT FA_PATH("A1B|A0D|D0D|D1D|B1B|C1B|B0C|C0C") "&A%~C"
@@ -563,4 +578,94 @@ int main(void) {
   test(PWD_REQ, "Password!", NULL, false);
   test(PWD_REQ, "Pass1!", NULL, false);
   test(PWD_REQ, "Password\t1!", NULL, false);
+#define NUM_ID "(0|1-90-9*+)"
+#define PREREL_ID "(" BUILD_ID "&!00-9+?)"
+#define BUILD_ID "(0-9|a-z|A-Z|\\-)+"
+#define CORE NUM_ID "\\." NUM_ID "\\." NUM_ID
+#define PREREL PREREL_ID "(\\." PREREL_ID ")*+"
+#define BUILD BUILD_ID "(\\." BUILD_ID ")*+"
+#define SEMVER CORE "(\\-" PREREL ")?+(\\+" BUILD ")?+"
+  test(SEMVER, "0.0.4", "0.0.4", true);
+  test(SEMVER, "1.2.3", "1.2.3", true);
+  test(SEMVER, "10.20.30", "10.20.30", true);
+  test(SEMVER, "1.1.2-prerelease+meta", "1.1.2-prerelease+meta", true);
+  test(SEMVER, "1.1.2+meta", "1.1.2+meta", true);
+  test(SEMVER, "1.1.2+meta-valid", "1.1.2+meta-valid", true);
+  test(SEMVER, "1.0.0-alpha", "1.0.0-alpha", true);
+  test(SEMVER, "1.0.0-beta", "1.0.0-beta", true);
+  test(SEMVER, "1.0.0-alpha.beta", "1.0.0-alpha.beta", true);
+  test(SEMVER, "1.0.0-alpha.beta.1", "1.0.0-alpha.beta.1", true);
+  test(SEMVER, "1.0.0-alpha.1", "1.0.0-alpha.1", true);
+  test(SEMVER, "1.0.0-alpha0.valid", "1.0.0-alpha0.valid", true);
+  test(SEMVER, "1.0.0-alpha.0valid", "1.0.0-alpha.0valid", true);
+  test(SEMVER, "1.0.0-alpha-a.b-c-somethinglong+build.1-aef.1-its-okay",
+       "1.0.0-alpha-a.b-c-somethinglong+build.1-aef.1-its-okay", true);
+  test(SEMVER, "1.0.0-rc.1+build.1", "1.0.0-rc.1+build.1", true);
+  test(SEMVER, "2.0.0-rc.1+build.123", "2.0.0-rc.1+build.123", true);
+  test(SEMVER, "1.2.3-beta", "1.2.3-beta", true);
+  test(SEMVER, "10.2.3-DEV-SNAPSHOT", "10.2.3-DEV-SNAPSHOT", true);
+  test(SEMVER, "1.2.3-SNAPSHOT-123", "1.2.3-SNAPSHOT-123", true);
+  test(SEMVER, "1.0.0", "1.0.0", true);
+  test(SEMVER, "2.0.0", "2.0.0", true);
+  test(SEMVER, "1.1.7", "1.1.7", true);
+  test(SEMVER, "2.0.0+build.1848", "2.0.0+build.1848", true);
+  test(SEMVER, "2.0.1-alpha.1227", "2.0.1-alpha.1227", true);
+  test(SEMVER, "1.0.0-alpha+beta", "1.0.0-alpha+beta", true);
+  test(SEMVER, "1.2.3----RC-SNAPSHOT.12.9.1--.12+788",
+       "1.2.3----RC-SNAPSHOT.12.9.1--.12+788", true);
+  test(SEMVER, "1.2.3----R-S.12.9.1--.12+meta", "1.2.3----R-S.12.9.1--.12+meta",
+       true);
+  test(SEMVER, "1.2.3----RC-SNAPSHOT.12.9.1--.12",
+       "1.2.3----RC-SNAPSHOT.12.9.1--.12", true);
+  test(SEMVER, "1.0.0+0.build.1-rc.10000aaa-kk-0.1",
+       "1.0.0+0.build.1-rc.10000aaa-kk-0.1", true);
+  test(SEMVER, "99999999999999999999999.999999999999999999.99999999999999999",
+       "99999999999999999999999.999999999999999999.99999999999999999", true);
+  test(SEMVER, "1.0.0-0A.is.legal", "1.0.0-0A.is.legal", true);
+
+  test(SEMVER, "1", NULL, false);
+  test(SEMVER, "1.2", NULL, false);
+  test(SEMVER, "1.2.3-0123", "1.2.3-0", false);
+  test(SEMVER, "1.2.3-0123.0123", "1.2.3-0", false);
+  test(SEMVER, "1.1.2+.123", "1.1.2", false);
+  test(SEMVER, "+invalid", NULL, false);
+  test(SEMVER, "-invalid", NULL, false);
+  test(SEMVER, "-invalid+invalid", NULL, false);
+  test(SEMVER, "-invalid.01", NULL, false);
+  test(SEMVER, "alpha", NULL, false);
+  test(SEMVER, "alpha.beta", NULL, false);
+  test(SEMVER, "alpha.beta.1", NULL, false);
+  test(SEMVER, "alpha.1", NULL, false);
+  test(SEMVER, "alpha+beta", NULL, false);
+  test(SEMVER, "alpha_beta", NULL, false);
+  test(SEMVER, "alpha.", NULL, false);
+  test(SEMVER, "alpha..", NULL, false);
+  test(SEMVER, "beta", NULL, false);
+  test(SEMVER, "1.0.0-alpha_beta", "1.0.0-alpha", false);
+  test(SEMVER, "-alpha.", NULL, false);
+  test(SEMVER, "1.0.0-alpha..", "1.0.0-alpha", false);
+  test(SEMVER, "1.0.0-alpha..1", "1.0.0-alpha", false);
+  test(SEMVER, "1.0.0-alpha...1", "1.0.0-alpha", false);
+  test(SEMVER, "1.0.0-alpha....1", "1.0.0-alpha", false);
+  test(SEMVER, "1.0.0-alpha.....1", "1.0.0-alpha", false);
+  test(SEMVER, "1.0.0-alpha......1", "1.0.0-alpha", false);
+  test(SEMVER, "1.0.0-alpha.......1", "1.0.0-alpha", false);
+  test(SEMVER, "01.1.1", "1.1.1", false);
+  test(SEMVER, "1.01.1", NULL, false);
+  test(SEMVER, "1.1.01", "1.1.0", false);
+  test(SEMVER, "1.2", NULL, false);
+  test(SEMVER, "1.2.3.DEV", "1.2.3", false);
+  test(SEMVER, "1.2-SNAPSHOT", NULL, false);
+  test(SEMVER, "1.2.31.2.3----RC-SNAPSHOT.12.09.1--..12+788", "1.2.31", false);
+  test(SEMVER, "1.2-RC-SNAPSHOT", NULL, false);
+  test(SEMVER, "-1.0.3-gamma+b7718", "1.0.3-gamma+b7718", false);
+  test(SEMVER, "+justmeta", NULL, false);
+  test(SEMVER, "9.8.7+meta+meta", "9.8.7+meta", false);
+  test(SEMVER, "9.8.7-whatever+meta+meta", "9.8.7-whatever+meta", false);
+  test(SEMVER,
+       "99999999999999999999999.999999999999999999.99999999999999999"
+       "----RC-SNAPSHOT.12.09.1--------------------------------..12",
+       "99999999999999999999999.999999999999999999.99999999999999999"
+       "----RC-SNAPSHOT.12.0",
+       false);
 }
