@@ -95,6 +95,8 @@ static void rep_lazy(char *regex, char *input, struct cont *cont) {
   return; // backtrack
 }
 
+// keep in sync with grammar.bnf
+
 static char *parse_symbol(char *regex, char *sym) {
   if (!strchr(METACHARS, *regex))
     return *sym = *regex, ++regex;
@@ -136,9 +138,9 @@ static void match_atom(char *regex, char *input, struct cont *cont) {
     return; // backtrack or syntax
   }
 
-  bool complement = *regex == '~' && regex++;
+  bool compl = *regex == '~' && regex++;
 
-  if (*regex == '.' && *input && true ^ complement) {
+  if (*regex == '.' && *input && true ^ compl ) {
     cont->fp(cont->regex, ++input, cont->up);
     return; // backtrack
   }
@@ -152,9 +154,9 @@ static void match_atom(char *regex, char *input, struct cont *cont) {
 
   // character range wraparound
   if (lower > upper)
-    temp = upper, upper = lower - 1, lower = temp + 1, complement = !complement;
+    temp = upper, upper = lower - 1, lower = temp + 1, compl = !compl ;
 
-  if (*input && (lower <= *input && *input <= upper) ^ complement)
+  if (*input && (lower <= *input && *input <= upper) ^ compl )
     cont->fp(cont->regex, ++input, cont->up);
   return; // backtrack or syntax
 }

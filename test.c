@@ -493,6 +493,67 @@ int main(void) {
   test(UTF8_CHARS, "\xc2\x7f", "", false);     // bad tail
   test(UTF8_CHARS, "\xe2\x28\xa1", "", false); // bad tail
   test(UTF8_CHARS, "\x80x/", "", false);
+#define TSEP "(T|t)" // "T"
+#define ZULU "(Z|z)" // "Z"
+#define HOUR "(0-10-9|20-3)"
+#define MIN "0-50-9"
+#define SEC "(0-50-9|60)"
+#define FULL_TIME                                                              \
+  HOUR ":" MIN ":" SEC "(\\.0-9++)?+((\\+|\\-)" HOUR ":" MIN "|" ZULU ")"
+#define DIV4 "((0|2|4|8)(0|4|8)|(1|3|5|7|9)(2|6))"
+#define LEAP_YEAR "(" DIV4 "00|!0-90-900&0-90-9" DIV4 ")"
+#define FULL_DATE                                                              \
+  "(0-90-90-90-9\\-((0(1|3|5|7|8)|1(0|2))\\-(01-9|1-20-9|30-1)|(0(4|6|9)|11)"  \
+  "\\-(01-9|1-20-9|30)|02\\-(01-9|10-9|20-8))|" LEAP_YEAR "\\-02\\-29)"
+#define RFC3339 FULL_DATE TSEP FULL_TIME
+  test(RFC3339, "1985-04-12T23:20:50.52Z",      //
+       "1985-04-12T23:20:50.52Z", true);        // RFC ex.
+  test(RFC3339, "1996-12-19T16:39:57-08:00",    //
+       "1996-12-19T16:39:57-08:00", true);      // RFC ex.
+  test(RFC3339, "1996-12-20T00:39:57Z",         //
+       "1996-12-20T00:39:57Z", true);           // RFC ex.
+  test(RFC3339, "1990-12-31T23:59:60Z",         //
+       "1990-12-31T23:59:60Z", true);           // RFC ex.
+  test(RFC3339, "1990-12-31T15:59:60-08:00",    //
+       "1990-12-31T15:59:60-08:00", true);      // RFC ex.
+  test(RFC3339, "1937-01-01T12:00:27.87+00:20", //
+       "1937-01-01T12:00:27.87+00:20", true);   // RFC ex.
+  test(RFC3339, "1900-02-29T00:00:00Z", NULL, false);
+  test(RFC3339, "2000-02-29T00:00:00Z", "2000-02-29T00:00:00Z", true);
+  test(RFC3339, "2001-02-29T00:00:00Z", NULL, false);
+  test(RFC3339, "2002-02-29T00:00:00Z", NULL, false);
+  test(RFC3339, "2004-02-29T00:00:00Z", "2004-02-29T00:00:00Z", true);
+  test(RFC3339, "0000-02-30T00:00:00Z", NULL, false);
+  test(RFC3339, "0000-04-30T00:00:00Z", "0000-04-30T00:00:00Z", true);
+  test(RFC3339, "0000-04-31T00:00:00Z", NULL, false);
+  test(RFC3339, "0000-12-31T00:00:00Z", "0000-12-31T00:00:00Z", true);
+  test(RFC3339, "0000-00-00T00:00:00Z", NULL, false);
+  test(RFC3339, "0000-00-01T00:00:00Z", NULL, false);
+  test(RFC3339, "0000-01-00T00:00:00Z", NULL, false);
+  test(RFC3339, "0000-01-01T00:00:00Z", "0000-01-01T00:00:00Z", true);
+  test(RFC3339, "0000-01-01t00:00:00z", "0000-01-01t00:00:00z", true);
+  test(RFC3339, "0000-01-01 00:00:00Z", NULL, false);
+  test(RFC3339, "0000-01-01T00:00:00", NULL, false);
+  test(RFC3339, "1970-01-01T00:00:00Z", "1970-01-01T00:00:00Z", true);
+  test(RFC3339, "1970-01-01T00:00:00+00:00", "1970-01-01T00:00:00+00:00", true);
+  test(RFC3339, "1970-01-01T00:00:00-00:00", "1970-01-01T00:00:00-00:00", true);
+  test(RFC3339, "1970-01-01T00:00:00+0000", NULL, false);
+#define ETAG "(W/)?+\"(\\!-\xff&~\")*+\""
+  test(ETAG, "", NULL, false);
+  test(ETAG, "W/", NULL, false);
+  test(ETAG, "\"xyzzy\"", "\"xyzzy\"", true);     // RFC ex.
+  test(ETAG, "W/\"xyzzy\"", "W/\"xyzzy\"", true); // RFC ex.
+  test(ETAG, "\"\"", "\"\"", true);               // RFC ex.
+  test(ETAG, "\"r\x80s\xfft\"", "\"r\x80s\xfft\"", true);
+  test(ETAG, "xyzzy", NULL, false);
+  test(ETAG, "W/xyzzy", NULL, false);
+  test(ETAG, "w/\"xyzzy\"", "\"xyzzy\"", false);
+  test(ETAG, "\"xyzzy\" ", "\"xyzzy\"", false);
+  test(ETAG, "\"xyzzy", NULL, false);
+  test(ETAG, "\"xy zzy\"", NULL, false);
+  test(ETAG, "\"xy\nzzy\"", NULL, false);
+  test(ETAG, "\"xy\"zzy\"", "\"xy\"", false);
+  test(ETAG, "\"xy\\\"zzy\"",  "\"xy\\\"", false);
 #define OCTET "(250-5|(20-4|10-9|1-9?)0-9)"
 #define IPV4 OCTET "\\." OCTET "\\." OCTET "\\." OCTET
   test(IPV4, "0.0.0.0", "0.0.0.0", true);
@@ -613,8 +674,8 @@ int main(void) {
   test(SEMVER, "1.0.0-alpha+beta", "1.0.0-alpha+beta", true);
   test(SEMVER, "1.2.3----RC-SNAPSHOT.12.9.1--.12+788",
        "1.2.3----RC-SNAPSHOT.12.9.1--.12+788", true);
-  test(SEMVER, "1.2.3----R-S.12.9.1--.12+meta", "1.2.3----R-S.12.9.1--.12+meta",
-       true);
+  test(SEMVER, "1.2.3----R-S.12.9.1--.12+meta", //
+       "1.2.3----R-S.12.9.1--.12+meta", true);
   test(SEMVER, "1.2.3----RC-SNAPSHOT.12.9.1--.12",
        "1.2.3----RC-SNAPSHOT.12.9.1--.12", true);
   test(SEMVER, "1.0.0+0.build.1-rc.10000aaa-kk-0.1",

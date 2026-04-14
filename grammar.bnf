@@ -1,3 +1,4 @@
+; keep in sync with cps-re.c
 <regex> ::= <term> (("|" | "&") <regex>)?
 <term> ::= "!"? <factor>*
 <factor> ::= <atom> (("*" | "+" | "?") ("+" | "?")?)?
