@@ -154,7 +154,7 @@ static void match_atom(char *regex, char *input, struct cont *cont) {
 
   // character range wraparound
   if (lower > upper)
-    temp = upper, upper = lower - 1, lower = temp + 1, compl = !compl ;
+    temp = upper, upper = lower - 1, lower = temp + 1, --compl ;
 
   if (*input && (lower <= *input && *input <= upper) ^ compl )
     cont->fp(cont->regex, ++input, cont->up);
